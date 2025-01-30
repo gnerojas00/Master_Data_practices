@@ -1,0 +1,192 @@
+--RESPUESTA A PREGUNTA 1
+
+select category, sum(total) as Total_de_ventas, sum(units_sold) as Unidades_vendidas, sum(profit) as Ganancias, avg(profit) Prom_ganancias
+from sales
+where (account = 'Abbot Industries') and (Year = 2020)
+group by category
+order by ganancias desc;
+
+--RESPUESTA A PREGUNTA 2
+
+select distinct f.account, f.category,
+sum(f.forecast) over (partition by f.account, f.category) as Pronostico_Ventas2022, sum(s.profit) over (partition by f.account, f.category) as Beneficio,
+MAX(f.opportunity_age) OVER (partition by f.category) as Oport_antigua,
+MIN(f.opportunity_age) OVER (partition by f.category) as Oport_reciente
+from forecasts as f INNER JOIN sales as s
+ON (f.account = s.account)
+AND
+(f.category = s.category)
+where (s.quarter = '2020 Q1') or (s.quarter = '2021 Q3')
+order by f.category, beneficio desc;
+
+
+--RESPUESTA A PREGUNTA 3
+
+select distinct a.industry, a.country, sum(s.product) as Ingreso_producto, sum(s.maintenance) as Ingreso_Mantenimiento, sum(s.parts) as Ingreso_partes, sum(s.support) as Ingreso_Soporte,sum(s.total) as Ingreso_total, sum(s.units_sold) as Unidades_Vendidas, sum(s.profit) as Beneficio_total, max(s.profit) as Beneficio_Max, avg(s.profit) as Beneficio_Promedio
+FROM sales as s inner JOIN accounts as a
+ON s.account = a.account
+WHERE (region = 'APAC') or (region = 'EMEA')
+group by a.industry, a.country
+order by Beneficio_Promedio desc;
+
+
+--RESPUESTA A PREGUNTA  4
+
+SELECT a.industry,
+sum(s.product) as Ventas_producto, sum(s.maintenance) as Ventas_mantenimiento, sum(s.parts) as Ventas_parte, sum(s.support) as Venta_soporte, sum(s.profit) as Beneficio, sum(s.units_sold) as Unidades_vendidas,
+CASE 
+WHEN sum(s.profit) > 1000000 THEN 'Alto'
+ELSE 'Normal'
+END AS Beneficio_Etiqueta
+FROM SALES as s join accounts as a
+on s.account = a.account
+WHERE s.account IN (select account
+from forecasts 
+where (year=2022) and (forecast > 500000)
+group by account)
+group by a.industry
+order by a.industry;
+
+
+
+--RESPUESTA A PREGUNTA 5 HACIENDO USO DE JOINS
+
+
+select distinct a.industry, s.quarter,
+max(f.opportunity_age) over(partition by a.industry, s.quarter) as Oport_Antg_Ind,
+min(f.opportunity_age) over(partition by a.industry, s.quarter) as Oport_Rec_Ind,
+sum(profit) over () as Benef_total,
+Sum(s.profit) over (partition by s.quarter) as Benef_total_trim,
+sum(s.profit) over (partition by a.industry order by s.quarter) as Benef_Trim_Cat,
+sum(s.profit) over(partition by a.industry) as Benef_Glob_Industria,
+sum(f.forecast) OVER (partition by a.industry order by f.forecast) as Pronost_Ac_Industria
+FROM Forecasts F
+JOIN Accounts A ON F.Account = A.Account
+JOIN Sales S ON F.Account = S.Account
+ORDER BY a.industry, s.quarter;
+
+--RESPUESTA A 5 HACIENDO USO DE LA VENTANA:
+
+select distinct industry, quarter,
+max(opportunity_age) over(partition by industry, quarter) as Oport_Antg_Ind,
+min(opportunity_age) over(partition by industry, quarter) as Oport_Rec_Ind,
+sum(profit) over () as Benef_total,
+Sum(profit) over (partition by quarter) as Benef_total_trim,
+sum(profit) over (partition by industry order by quarter) as Benef_Trim_Cat,
+sum(profit) over(partition by industry) as Benef_Glob_Industria,
+sum(forecast) OVER (partition by industry order by forecast) as Pronost_Ac_Industria
+from industry_quarter_window
+order by industry, quarter;
+
+
+--PROYECTO:CASO DE USO
+
+-- PRIMERA CONSULTA:
+
+
+--media y promedio de las sumas totales de beneficios por trimestre y luego tenemos el resultado anual -- 
+
+
+select year, avg(benef_t) as prom_anual, stddev(benef_t) as desv_anual,
+(desv_anual / prom_anual) * 100 as coeficiente_variacion,
+max(benef_t) as benef_max_anual,
+min(benef_t) as benef_min_anual,
+(prom_anual + desv_anual) ganancia_alta,
+(prom_anual - desv_anual) ganancia_baja
+from (select year, quarter_of_year, sum(profit) as benef_t
+from sales
+group by year, quarter_of_year)
+group by year
+order by year;
+
+--SEGUNDA CONSULTA
+
+CREATE VIEW Lim_benef as
+select year, avg(benef_t) as prom_anual, stddev(benef_t) as desv_anual,
+max(benef_t) as benef_max_anual,
+min(benef_t) as benef_min_anual,
+(avg(benef_t) + (stddev(benef_t))) ganancia_alta,
+(avg(benef_t) - (stddev(benef_t))) ganancia_baja
+from (select year, quarter_of_year, sum(profit) as benef_t
+from sales
+group by year, quarter_of_year) as SUBQUERY
+group by year
+order by year;
+
+select distinct lg.year, s.quarter_of_year trimestre, sum(s.profit) OVER (partition by s.year, s.quarter_of_year) as benef_t,
+CASE
+WHEN (sum(s.profit) OVER (partition by s.year, s.quarter_of_year)) >= lg.ganancia_alta then 'Alta'
+WHEN (sum(s.profit) OVER (partition by s.year, s.quarter_of_year)) <= lg.ganancia_baja then 'Baja'
+ELSE 'Normal'
+END AS Clasific_ganancias
+from sales s JOIN Lim_benef lg
+ON s.year = lg.year
+order by clasific_ganancias, lg.year;
+
+--TERCERA CONSULTA
+
+select year, avg(benef_q4) as prom_q4, stddev(benef_q4) as desv_q4,
+(prom_q4 + desv_q4) ganancia_alta_q4
+from (select year, category, sum(profit) as benef_q4
+from sales
+where quarter_of_year = 'Q4'
+group by year, category)
+group by year
+order by year;
+
+
+--CUARTA CONSULTA:
+
+CREATE VIEW Cat_clasificion as
+select year, avg(benef_q4) as prom_q4, stddev(benef_q4) as desv_q4,
+(avg(benef_q4) + stddev(benef_q4)) ganancia_alta_q4
+from (select year, category, sum(profit) as benef_q4
+from sales
+where quarter_of_year = 'Q4'
+group by year, category)
+group by year
+order by year;
+
+select distinct cc.year, s.category, (sum(s.profit) OVER (partition by s.year, s.category)) benef_cat_q4,
+CASE
+WHEN  (sum(s.profit) OVER (partition by s.year, s.category)) >  cc.ganancia_alta_q4 then 'Ingresos altos'
+else 'Ingresos normal'
+END AS Categoria_clasificacion_ingresos_q4
+from sales as s JOIN
+Cat_clasificion as cc ON
+s.year = cc.year
+where quarter_of_year = 'Q4'
+order by s.category;
+
+--QUINTA CONSULTA
+
+CREATE VIEW benef_pronosticados as
+select year, avg(benef_cuenta) prom_br_q4, stddev(benef_cuenta) desv_br_q4,
+(avg(benef_cuenta) + stddev(benef_cuenta)) altos_beneficios,
+(avg(benef_cuenta) - stddev(benef_cuenta)) bajos_beneficios
+from (select year, account, sum(profit) benef_cuenta
+from sales
+where quarter_of_year = 'Q4' and category = 'Break room'
+group by year, account)
+group by year;
+
+select distinct s.account, s.year, sum(s.profit) OVER (partition by s.account, s.year) benef_t,
+CASE
+WHEN (sum(s.profit) OVER (partition by s.account, s.year)) > bp.altos_beneficios then 'empresa_diamante'
+WHEN (sum(s.profit) OVER (partition by s.account, s.year)) < bp.bajos_beneficios then 'empresa_plata'
+else 'empresa_oro'
+end as Clasificacion_clientes
+from sales as s join benef_pronosticados as bp
+on s.year = bp.year
+where quarter_of_year = 'Q4' and category = 'Break room'
+order by s.year, benef_t desc;
+
+
+--CONSULTA ANEXO:
+
+
+select account, prediction_category, sum(forecast) dinero_proyectado_2022
+from forecasts
+where category = 'Break room' and account in ('Barrows Investment Group', 'East Avenue Technology', 'Reidwo Consulting', 'Crystal Retail Services', 'MilaMart')
+group by account, prediction_category;
+
